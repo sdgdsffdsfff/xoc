@@ -51,6 +51,7 @@ author: GongKai, JinYue
 #include "xassert.h"
 #include "lircomm.h"
 #include "lir.h"
+#include "ltype.h"
 #include "dex_driver.h"
 
 Int32 gMemAlloc = 0;
@@ -134,7 +135,7 @@ Int32 findPos(PositionMap* posMap,UInt32 target)
             low = mid;
     }
 
-    abort();
+    ASSERT0(0);
     return -1;
 }
 
@@ -391,7 +392,7 @@ void genInstruction(
                 memcpy(lir->data,(BYTE*)data,dataSize);
                 break;
             }
-            default: abort();
+            default: ASSERT0(0);
             }
             result = (LIRBaseOp*)lir;
             break;
@@ -446,7 +447,7 @@ END:
             break;
         }default:{
             result = NULL;
-            abort();
+            ASSERT0(0);
         }
         }
 
@@ -471,8 +472,7 @@ END:
                     width = size * 4 + 2;
                     break;
                 }
-                default:
-                    abort();
+                default: ASSERT0(0);
                     width = gDIROpcodeInfo.widths[opcode];
                     break;
             }
@@ -682,6 +682,8 @@ bool d2rMethod(D2Dpool* pool, DexFile* pDexFile, const DexMethod* pDexMethod)
     positionMap.posMap =
         (UInt32*)malloc((codeEnd - codeStart + 1)*sizeof(UInt32));
     UInt32 dexOffset = 0;
+    UInt32 lastValidDexOffset = 0;
+    bool lastInstrIsPseudo = false;
 
     while (codePtr < codeEnd) {
         if (!contentIsInsn(codePtr)) {
@@ -690,6 +692,11 @@ bool d2rMethod(D2Dpool* pool, DexFile* pDexFile, const DexMethod* pDexMethod)
 
         UInt16 instr = *codePtr;
         if (instr == 0x100 || instr == 0x200) {
+            // If the prev insn is not pseudo, update the lastValidDexOffset.
+            if (!lastInstrIsPseudo) {
+                lastValidDexOffset = dexOffset;
+            }
+            lastInstrIsPseudo = true;
             UInt32 width;
             switch (instr) {
                 case 0x100: {
@@ -705,24 +712,30 @@ bool d2rMethod(D2Dpool* pool, DexFile* pDexFile, const DexMethod* pDexMethod)
                     break;
                 }
                 default:
-                    abort();
+                    ASSERT0(0);
                     break;
             }
             codePtr += width;
             dexOffset += width;
-            continue;
+        } else {
+            // If insn is not pseudo insn, update posMap; otherwise, continue to the next insn.
+            lastInstrIsPseudo = false;
+            DIROpcode opcode = getOpcodeFromCodeUnit(instr);
+            UInt32 width = gDIROpcodeInfo.widths[opcode];
+
+            positionMap.posMap[instrCount] = dexOffset;
+
+            codePtr += width;
+            dexOffset += width;
+            instrCount++;
         }
-        DIROpcode opcode = getOpcodeFromCodeUnit(instr);
-        UInt32 width = gDIROpcodeInfo.widths[opcode];
-
-        positionMap.posMap[instrCount] = dexOffset;
-
-        codePtr += width;
-        dexOffset += width;
-        instrCount++;
     }
-
-    positionMap.posMap[instrCount] = dexOffset;
+    // if the last instr is pseudo, the valid dexoffset is the lastValidDexOffset but not the dexoffset.
+    if (lastInstrIsPseudo) {
+        positionMap.posMap[instrCount] = lastValidDexOffset;
+    } else {
+        positionMap.posMap[instrCount] = dexOffset;
+    }
     positionMap.posNum = instrCount + 1;
 
     lirList = (LIRBaseOp**)LIRMALLOC(instrCount * sizeof(LIRBaseOp*));
